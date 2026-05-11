@@ -1,0 +1,17 @@
+{
+	"name": "Freddy — needs attention",
+	"short_name": "Freddy",
+	"id": "/",
+	"start_url": "/",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "portrait",
+	"background_color": "#1c1714",
+	"theme_color": "#f4a826",
+	"description": "Tap a tile, the other parent's phone buzzes.",
+	"icons": [
+		{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+	]
+}
