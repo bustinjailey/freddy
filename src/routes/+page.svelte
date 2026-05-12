@@ -117,15 +117,32 @@
 		}
 	}
 
+	/** Tell the server "I'm looking at it" so it stops re-buzzing me. Best-effort, fire-and-forget. */
+	function ackSeen() {
+		if (!me) return;
+		fetch('/api/ack', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ identity: me })
+		}).catch(() => {});
+	}
+
 	onMount(() => {
 		const saved = localStorage.getItem(STORE_KEY);
 		if (saved && data.identities.includes(saved)) {
 			me = saved;
 			view = 'main';
+			ackSeen(); // opening the app = I've seen whatever was nudging me
 			setupPush(); // best-effort (no fresh gesture; may resolve to needs-install / already-granted)
 		} else {
 			view = 'pick';
 		}
+
+		const onVisible = () => {
+			if (document.visibilityState === 'visible' && view === 'main') ackSeen();
+		};
+		document.addEventListener('visibilitychange', onVisible);
+		return () => document.removeEventListener('visibilitychange', onVisible);
 	});
 
 	/** @param {string} name */
@@ -133,6 +150,7 @@
 		me = name;
 		localStorage.setItem(STORE_KEY, name);
 		view = 'main';
+		ackSeen();
 		setupPush(); // inside a click handler → user gesture → permission prompt is allowed
 	}
 
@@ -157,7 +175,13 @@
 			});
 			const body = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(body?.message || 'HTTP ' + res.status);
-			if (body.delivered) showToast(`Sent “${signal.label}” to ${other}`, 'ok');
+			if (body.delivered)
+				showToast(
+					body.escalating
+						? `Sent “${signal.label}” — keeping ${other}'s phone buzzing until they see it`
+						: `Sent “${signal.label}” to ${other}`,
+					'ok'
+				);
 			else showToast(`${other}'s phone isn't set up for alerts yet`, 'err');
 		} catch (err) {
 			console.error('[freddy] send', err);
