@@ -1,23 +1,31 @@
 import { json, error } from '@sveltejs/kit';
 import { getIdentities, otherIdentity } from '$lib/server/config.js';
-import { getSubscription, deleteSubscription } from '$lib/server/store.js';
-import { sendPush } from '$lib/server/push.js';
+import {
+	getSubscription,
+	deleteSubscription,
+	getNativeToken,
+	deleteNativeToken
+} from '$lib/server/store.js';
+import { sendWebPush, sendApns, sendFcm } from '$lib/server/push.js';
 import { startEscalation, cancelEscalation } from '$lib/server/escalation.js';
 import { SIGNAL_BY_ID } from '$lib/signals.js';
 
 /**
- * Push one notification for `sig` to `to`. Returns the same shape as `sendPush` and prunes a
- * dead subscription. `attempt` 0 = the initial ping; >0 = an escalation nudge (labelled as such).
+ * Deliver one notification for `sig` to `to`, over every channel that parent is registered on:
+ * the native app (APNs/FCM) — which, for "request" tiles, sends a *critical* alert that bypasses
+ * silent/DND — and/or the PWA (Web Push). Dead endpoints are pruned. `attempt` 0 = the initial
+ * ping; >0 = an escalation nudge (labelled as such).
+ *
  * @param {string} to
  * @param {string} from
- * @param {{ id: string, label: string, emoji: string }} sig
+ * @param {{ id: string, label: string, emoji: string, escalate: boolean }} sig
  * @param {number} attempt
- * @returns {Promise<{ ok: true } | { ok: false, gone: boolean, error: string }>}
+ * @returns {Promise<{ ok: boolean, gone: boolean, channels: string[], errors: string[] }>}
+ *   ok   = at least one channel accepted it
+ *   gone = the recipient has no live endpoint left (stop escalating)
  */
-async function pushSignal(to, from, sig, attempt) {
-	const sub = getSubscription(to);
-	if (!sub) return { ok: false, gone: true, error: 'no-subscription' };
-	const r = await sendPush(sub, {
+async function deliver(to, from, sig, attempt) {
+	const payload = {
 		title: `${sig.emoji} ${sig.label}`,
 		body: attempt > 0 ? `from ${from} · still waiting` : `from ${from}`,
 		signal: sig.id,
@@ -25,9 +33,51 @@ async function pushSignal(to, from, sig, attempt) {
 		to,
 		attempt,
 		ts: Date.now()
-	});
-	if (!r.ok && r.gone) deleteSubscription(to);
-	return r;
+	};
+	const critical = sig.escalate; // "request" tiles ride the critical-alert path on iOS
+
+	const channels = /** @type {string[]} */ ([]);
+	const errors = /** @type {string[]} */ ([]);
+	let anyOk = false;
+	let anyEndpoint = false;
+
+	const native = getNativeToken(to);
+	if (native) {
+		anyEndpoint = true;
+		const r =
+			native.platform === 'ios'
+				? await sendApns(native.token, payload, { critical })
+				: await sendFcm(native.token, payload, { critical });
+		if (r.ok) {
+			anyOk = true;
+			channels.push(native.platform);
+		} else {
+			errors.push(r.error);
+			if (r.gone) {
+				deleteNativeToken(to);
+				anyEndpoint = false;
+			}
+		}
+	}
+
+	const sub = getSubscription(to);
+	if (sub) {
+		anyEndpoint = true;
+		const r = await sendWebPush(sub, payload);
+		if (r.ok) {
+			anyOk = true;
+			channels.push('web');
+		} else {
+			errors.push(r.error);
+			if (r.gone) {
+				deleteSubscription(to);
+				// only mark "no endpoint" if there's also no live native token
+				if (!getNativeToken(to)) anyEndpoint = anyEndpoint && false;
+			}
+		}
+	}
+
+	return { ok: anyOk, gone: !anyEndpoint, channels, errors };
 }
 
 /**
@@ -53,18 +103,14 @@ export async function POST({ request }) {
 	cancelEscalation(from);
 	cancelEscalation(to);
 
-	const r = await pushSignal(to, from, sig, 0);
+	const r = await deliver(to, from, sig, 0);
 	if (!r.ok) {
+		const noEndpoint = !getNativeToken(to) && !getSubscription(to);
 		return json({
 			ok: true,
 			delivered: false,
-			reason:
-				r.error === 'no-subscription'
-					? 'no-subscription'
-					: r.gone
-						? 'subscription-expired'
-						: 'push-error',
-			detail: r.error,
+			reason: noEndpoint ? 'not-registered' : 'push-error',
+			detail: r.errors.join('; ') || undefined,
 			to
 		});
 	}
@@ -72,7 +118,7 @@ export async function POST({ request }) {
 	let escalating = false;
 	if (sig.escalate) {
 		escalating = true;
-		startEscalation(to, sig, (attempt) => pushSignal(to, from, sig, attempt));
+		startEscalation(to, sig, (attempt) => deliver(to, from, sig, attempt));
 	}
-	return json({ ok: true, delivered: true, escalating, to });
+	return json({ ok: true, delivered: true, escalating, channels: r.channels, to });
 }

@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { SIGNALS } from '$lib/signals.js';
+	import { isNativeApp, initNativePush } from '$lib/native.js';
 
 	let { data } = $props();
 	// data.identities: [string, string], data.vapidPublicKey: string
@@ -62,8 +63,31 @@
 		return out;
 	}
 
+	/** Set up alerts the right way for where we're running: native push in the Capacitor app,
+	 *  Web Push in the browser/PWA. */
+	async function setupAlerts() {
+		if (isNativeApp()) {
+			pushState = 'working';
+			try {
+				const r = await initNativePush(me, ackSeen);
+				if (r.active) pushState = 'ok';
+				else if (r.reason === 'denied') pushState = 'denied';
+				else {
+					pushState = 'error';
+					pushDetail = 'native push: ' + (r.reason ?? 'unavailable');
+				}
+			} catch (err) {
+				pushState = 'error';
+				pushDetail = String(/** @type {any} */ (err)?.message ?? err);
+			}
+			return;
+		}
+		await setupPush();
+	}
+
 	async function setupPush() {
 		try {
+			if (isNativeApp()) return; // the native shell handles its own push
 			if (
 				!('serviceWorker' in navigator) ||
 				!('PushManager' in window) ||
@@ -133,7 +157,7 @@
 			me = saved;
 			view = 'main';
 			ackSeen(); // opening the app = I've seen whatever was nudging me
-			setupPush(); // best-effort (no fresh gesture; may resolve to needs-install / already-granted)
+			setupAlerts(); // best-effort (no fresh gesture; may resolve to needs-install / already-granted)
 		} else {
 			view = 'pick';
 		}
@@ -151,7 +175,7 @@
 		localStorage.setItem(STORE_KEY, name);
 		view = 'main';
 		ackSeen();
-		setupPush(); // inside a click handler → user gesture → permission prompt is allowed
+		setupAlerts(); // inside a click handler → user gesture → permission prompt is allowed
 	}
 
 	function switchIdentity() {

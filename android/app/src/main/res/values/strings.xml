@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Freddy</string>
+    <string name="title_activity_main">Freddy</string>
+    <string name="package_name">org.bustinjailey.freddy</string>
+    <string name="custom_url_scheme">org.bustinjailey.freddy</string>
+</resources>
