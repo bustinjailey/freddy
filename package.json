@@ -9,9 +9,13 @@
 		"preview": "vite preview",
 		"start": "node build/index.js",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json"
+		"check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
+		"cap:sync": "cap sync",
+		"cap:ios": "cap open ios",
+		"cap:android": "cap open android"
 	},
 	"devDependencies": {
+		"@capacitor/cli": "^7.6.4",
 		"@sveltejs/adapter-node": "^5.3.3",
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
@@ -23,6 +27,12 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@capacitor/android": "^7.6.4",
+		"@capacitor/app": "^7.1.2",
+		"@capacitor/core": "^7.6.4",
+		"@capacitor/ios": "^7.6.4",
+		"@capacitor/push-notifications": "^7.0.6",
+		"@parse/node-apn": "^6.5.0",
 		"web-push": "^3.6.7"
 	}
 }

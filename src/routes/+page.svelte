@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { SIGNALS } from '$lib/signals.js';
+	import { isNativeApp, initNativePush } from '$lib/native.js';
 
 	let { data } = $props();
 	// data.identities: [string, string], data.vapidPublicKey: string
@@ -62,8 +63,31 @@
 		return out;
 	}
 
+	/** Set up alerts the right way for where we're running: native push in the Capacitor app,
+	 *  Web Push in the browser/PWA. */
+	async function setupAlerts() {
+		if (isNativeApp()) {
+			pushState = 'working';
+			try {
+				const r = await initNativePush(me, ackSeen);
+				if (r.active) pushState = 'ok';
+				else if (r.reason === 'denied') pushState = 'denied';
+				else {
+					pushState = 'error';
+					pushDetail = 'native push: ' + (r.reason ?? 'unavailable');
+				}
+			} catch (err) {
+				pushState = 'error';
+				pushDetail = String(/** @type {any} */ (err)?.message ?? err);
+			}
+			return;
+		}
+		await setupPush();
+	}
+
 	async function setupPush() {
 		try {
+			if (isNativeApp()) return; // the native shell handles its own push
 			if (
 				!('serviceWorker' in navigator) ||
 				!('PushManager' in window) ||
@@ -117,15 +141,32 @@
 		}
 	}
 
+	/** Tell the server "I'm looking at it" so it stops re-buzzing me. Best-effort, fire-and-forget. */
+	function ackSeen() {
+		if (!me) return;
+		fetch('/api/ack', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ identity: me })
+		}).catch(() => {});
+	}
+
 	onMount(() => {
 		const saved = localStorage.getItem(STORE_KEY);
 		if (saved && data.identities.includes(saved)) {
 			me = saved;
 			view = 'main';
-			setupPush(); // best-effort (no fresh gesture; may resolve to needs-install / already-granted)
+			ackSeen(); // opening the app = I've seen whatever was nudging me
+			setupAlerts(); // best-effort (no fresh gesture; may resolve to needs-install / already-granted)
 		} else {
 			view = 'pick';
 		}
+
+		const onVisible = () => {
+			if (document.visibilityState === 'visible' && view === 'main') ackSeen();
+		};
+		document.addEventListener('visibilitychange', onVisible);
+		return () => document.removeEventListener('visibilitychange', onVisible);
 	});
 
 	/** @param {string} name */
@@ -133,7 +174,8 @@
 		me = name;
 		localStorage.setItem(STORE_KEY, name);
 		view = 'main';
-		setupPush(); // inside a click handler → user gesture → permission prompt is allowed
+		ackSeen();
+		setupAlerts(); // inside a click handler → user gesture → permission prompt is allowed
 	}
 
 	function switchIdentity() {
@@ -157,7 +199,13 @@
 			});
 			const body = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(body?.message || 'HTTP ' + res.status);
-			if (body.delivered) showToast(`Sent “${signal.label}” to ${other}`, 'ok');
+			if (body.delivered)
+				showToast(
+					body.escalating
+						? `Sent “${signal.label}” — keeping ${other}'s phone buzzing until they see it`
+						: `Sent “${signal.label}” to ${other}`,
+					'ok'
+				);
 			else showToast(`${other}'s phone isn't set up for alerts yet`, 'err');
 		} catch (err) {
 			console.error('[freddy] send', err);
