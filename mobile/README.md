@@ -1,86 +1,114 @@
-# Freddy — native wrapper
+# Freddy — native Android wrapper
 
 A thin [Capacitor](https://capacitorjs.com/) shell around the same web app, so we can do the one
 thing a PWA fundamentally can't: **ring through silent mode / Focus / Do-Not-Disturb** when the
 other parent taps a request tile.
 
-The shell is *just* a WebView pointed at `https://freddy.bustinjailey.org` (`server.url` in
-`capacitor.config.ts`) plus a native push bridge. There is no second copy of the UI — fix a bug in
-`src/`, deploy, and the app updates. The only native-specific code is:
+**Android-only, sideloaded.** No Play Store, no Firebase, no FCM, no Apple anything. The phone
+itself talks to Freddy over a persistent SSE connection and raises a *local* notification on a
+DND-bypass channel — which is Android's only way to override silent mode from a non-Play-Store
+app, and it works for a sideloaded build because the heavy lifting is the *channel*, not the
+push payload.
 
-- `capacitor.config.ts` — appId `org.bustinjailey.freddy`, loads the remote URL, falls back to
-  `mobile/fallback/index.html` if the server is unreachable at launch.
-- `src/lib/native.js` — runs *inside* the WebView; when `window.Capacitor.isNativePlatform()` it
-  creates the Android alert channel, asks for the notification permission, registers for APNs/FCM,
-  and POSTs the device token to `/api/register-native`. No-op in a plain browser / the PWA.
-- `src/lib/server/push.js` — server-side APNs (via `@parse/node-apn`) and an FCM stub; for request
-  tiles the iOS payload uses `sound:{critical:1}` + `interruption-level:critical`.
-- `ios/`, `android/` — the generated native projects (committed so the entitlements / manifest /
-  Info.plist edits below don't get lost).
+## How it works
 
-## What's done vs. what needs you (Justin)
-
-**Done in this repo:** Capacitor v7 wired up, both native projects scaffolded, iOS entitlements +
-`UIBackgroundModes`, Android `POST_NOTIFICATIONS` / `ACCESS_NOTIFICATION_POLICY` permissions and the
-high-importance notification channel, server-side APNs dispatch (gated on env vars — does nothing
-until they're set), `/api/register-native`, and the in-WebView registration glue.
-
-**Blocked on you — none of this can happen on the Linux build runner / without your Apple+Google
-accounts:**
-
-1. **Apple Developer Program** enrollment ($99/yr) on the `org.bustinjailey.freddy` bundle ID.
-2. **Critical Alerts entitlement** — Apple gates this behind a manual request:
-   <https://developer.apple.com/contact/request/notifications-critical-alerts-entitlement/>.
-   Draft justification (paste into the form):
-   > Freddy is a private two-person app my partner and I use to call each other when one of us
-   > needs help with our newborn — "need you", "diaper", "bottle". These are time-critical, in-home
-   > requests; if the phone is on silent or in a Focus mode the alert is useless. We need Critical
-   > Alerts so the "need you" class of notification can be heard. The app is not distributed publicly
-   > (LAN + Tailscale only, two known users) and Critical Alerts are used *only* for those explicit
-   > help requests, never for marketing or routine notifications.
-   While it's pending, comment out the `com.apple.developer.usernotifications.critical-alerts` key in
-   `ios/App/App/App.entitlements` so TestFlight/debug builds still sign — they'll just deliver a
-   normal (time-sensitive) alert until the entitlement lands.
-3. **APNs auth key** — App Store Connect → Users & Access → Integrations → Keys → "+", enable Apple
-   Push Notifications service (APNs), download the `.p8` once. Gives you `APNS_KEY` (the file
-   contents, or path), `APNS_KEY_ID`, `APNS_TEAM_ID`. Put them in `/opt/apps/freddy/env` — see the
-   table in the top-level README / `.env.example`.
-4. **A Mac with Xcode** to actually build & ship the iOS app (`npm run cap:ios` opens it). The Linux
-   runner scaffolded `ios/` but can't run `pod install` / `xcodebuild`. On the Mac, also: in Xcode →
-   target *App* → Signing & Capabilities, add the **Push Notifications** capability and the
-   **Critical Alerts** capability (once Apple approves), and make sure *Build Settings →
-   Code Signing Entitlements* points at `App/App.entitlements` (Xcode usually wires this when you add
-   the capability — verify it).
-5. **Android (later, optional):** to push to the Android app we need FCM — create a Firebase project,
-   add an Android app for `org.bustinjailey.freddy`, drop `google-services.json` into
-   `android/app/`, and create a service account for the server (`FCM_*` env, `firebase-admin`).
-   `src/lib/server/push.js` has the dispatch stubbed with a TODO. **Until then the Android build
-   falls back to Web Push** (which still works on Android — Android honors high-importance Web Push
-   channels reasonably well; it just can't bypass DND). The `setBypassDnd(true)` channel tweak is a
-   small native change we can do once FCM is in.
-
-## Build (once the above is sorted)
-
-```sh
-npm install
-npm run build            # produces the SvelteKit client the fallback page lives alongside
-npx cap sync             # copies capacitor.config.ts + plugins into ios/ and android/
-npm run cap:android      # opens Android Studio  -> Run / generate signed APK/AAB
-npm run cap:ios          # opens Xcode (Mac only) -> Run / Archive -> TestFlight
+```
++----------------+ tap a tile +-----------------+ SSE 'signal'  +------------------+
+| Sender's phone | ---------> | freddy server   | ------------> | Justin's Android |
+| (PWA, browser) |   /notify  |  /api/stream    |               |  FreddyStream    |
++----------------+            |  /api/notify    |               |  foreground svc  |
+                              +-----------------+               +------------------+
+                                                                         |
+                                                                         v
+                                                       local notification on
+                                                       "freddy-alerts" channel:
+                                                         IMPORTANCE_HIGH
+                                                         setBypassDnd(true)
+                                                         USAGE_ALARM sound
+                                                       -> rings through silent/DND
 ```
 
-`FREDDY_NATIVE_URL` (build-time env, optional) overrides the URL the shell loads — handy for
-pointing a dev build at a laptop. Defaults to `https://freddy.bustinjailey.org`.
+The foreground service is what holds the SSE connection. Android won't kill it while it's
+foreground; an "Freddy is listening" notification on a low-importance channel keeps it pinned.
+The service auto-reconnects on network drops (exponential backoff) and re-starts after reboot.
 
-## How a critical alert flows
+There's no FCM, no `google-services.json`, no Apple Push, no APNs key, no Critical Alerts
+entitlement request. The whole thing is self-contained on `freddy.bustinjailey.org` plus the
+Android code in `android/app/src/main/java/org/bustinjailey/freddy/`.
 
-1. Mom opens the native app → `src/lib/native.js` registers → APNs returns a device token →
-   `POST /api/register-native { identity:"Mom", platform:"ios", token }` → server stores it in
-   `data/native-tokens.json`.
-2. Justin taps **Need you** → `POST /api/notify { from:"Justin", signal:"need-you" }`.
-3. Server sees Mom has a native iOS token, sends an APNs alert with `sound:{critical:1, volume:1}` +
-   `interruption-level:"critical"` → it rings even on silent / in Focus.
-4. It also starts the existing escalation timer, so it re-fires every ~30s until Mom acks (opens the
-   app, or taps the notification — `pushNotificationActionPerformed` → `POST /api/ack`).
-5. If Mom *also* has the PWA subscribed, she gets that too (deduped by notification tag); dead
-   endpoints get pruned on the first failed send.
+## What's done vs. what needs you
+
+**Done in this repo:**
+- Capacitor v7 wired up, Android project scaffolded
+- `AndroidManifest.xml`: `INTERNET`, `POST_NOTIFICATIONS`, `ACCESS_NOTIFICATION_POLICY`,
+  `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `WAKE_LOCK`, `RECEIVE_BOOT_COMPLETED`,
+  service declaration with `foregroundServiceType="dataSync"`
+- `FreddyStreamService` — the foreground service: OkHttp SSE client, reconnect-with-backoff,
+  high-importance + DND-bypass + alarm-volume alerts channel, low-importance status channel
+- `FreddyStreamPlugin` — Capacitor plugin exposing `start({identity, baseUrl})`, `stop()`,
+  `status()`, `requestNotificationPermission()`, `openDndSettings()`, `openBatterySettings()`
+- `src/lib/native.js` — calls into the plugin from the WebView once the user has picked their
+  identity; surfaces "needs DND access" state to the UI
+- Server-side: `GET /api/stream?identity=…` SSE endpoint, in-memory subscriber registry, notify
+  fans out to SSE first (preferred), then web push for whoever's still on the PWA
+
+**Needs you (one-time setup on your Android phone):**
+
+1. **Build the APK** — needs Android Studio's SDK + Java 17. From a Mac/Linux with the SDK:
+   ```sh
+   npm install && npm run build && npm run cap:sync && npm run cap:apk
+   ```
+   APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`. (Debug builds are fine for
+   sideloading — release signing only matters for the Play Store.)
+
+2. **Install on your phone:**
+   ```sh
+   adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+   ```
+   Or copy the APK to the phone and tap it (you'll have to allow "install unknown apps" once).
+
+3. **Grant permissions on first launch:**
+   - Allow the notification permission when prompted.
+   - The app will show a yellow "let Freddy ring through Do-Not-Disturb" banner. Tap **DND access**,
+     find Freddy in the list, toggle it on. There's no programmatic grant for this — Android
+     forces it to be a manual settings-screen toggle.
+   - Tap **Battery settings**, find Freddy, mark it **Unrestricted**. Without this, aggressive
+     OEMs (Samsung One UI, Xiaomi MIUI, Oneplus OxygenOS) will kill the foreground service after
+     a while of idle and you'll stop getting alerts. Stock Android / Pixel is more forgiving but
+     still benefits.
+
+After that the app's job is just to stay launched once — it'll be alive across reboots via the
+sticky foreground service, and the connection auto-reconnects.
+
+## Testing it
+
+With the server reachable, the phone connected to the app, and `Mom` triggering from the PWA:
+
+- Phone on silent → "Need you" rings (alarm-volume, vibrates), even with Do-Not-Disturb on.
+- Phone in Focus mode → same.
+- App in background or screen off → service stays alive, notification fires.
+- Tap the notification → opens Freddy → triggers `/api/ack` → server stops escalating.
+
+The server's `/api/health` shows whether a stream is currently connected:
+`recipients: { "Justin": { web: false, stream: 1 }, "Mom": { web: true, stream: 0 } }`.
+
+## Limitations / things to know
+
+- **Phone must have a path to `freddy.bustinjailey.org`.** That means home WiFi or Tailscale up.
+  If the connection drops, the service reconnects when it comes back. Signals fired while the
+  phone was offline are lost — but the escalation timer keeps re-firing every ~30s for a few
+  minutes, so as long as it reconnects within that window you'll get the alert.
+- **`setBypassDnd(true)` requires user-granted policy access** (the manual settings toggle). Until
+  that's granted the channel is still high-importance but DND will still suppress it.
+- **No code-signing for the APK.** It's a debug build sideloaded to one phone. If we ever want it
+  on more than two devices or in the Play Store, generate a release key and sign.
+
+## Why not FCM / why not Critical Alerts?
+
+- *FCM* would work and would let Android sleep the app between pushes (better battery), but it
+  requires a Firebase project, a `google-services.json`, and a server-side service account —
+  all extra moving parts for a two-person family app. The SSE-from-our-own-server approach has
+  one fewer vendor in the loop and works fine on a phone that's always on the home network.
+- *Critical Alerts* is iOS-only. Justin's on Android; his wife uses the PWA. If she ever wants
+  the iOS native experience later, that's a separate piece of work (Apple Developer Program +
+  entitlement request + Mac/Xcode).

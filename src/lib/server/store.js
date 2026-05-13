@@ -7,90 +7,50 @@ import { env } from '$env/dynamic/private';
 // so "data/" resolves there and is writable.
 const DATA_DIR = resolve(env.FREDDY_DATA_DIR ?? 'data');
 const SUBS_FILE = join(DATA_DIR, 'subscriptions.json'); // Web Push (PWA)
-const NATIVE_FILE = join(DATA_DIR, 'native-tokens.json'); // APNs / FCM (Capacitor app)
 
-/** @param {string} file @returns {Record<string, any>} */
-function readJson(file) {
+/** @returns {Record<string, any>} */
+function readSubs() {
 	try {
-		const obj = JSON.parse(readFileSync(file, 'utf8'));
+		const obj = JSON.parse(readFileSync(SUBS_FILE, 'utf8'));
 		return obj && typeof obj === 'object' ? obj : {};
 	} catch {
 		return {};
 	}
 }
 
-/** @param {string} file @param {Record<string, unknown>} obj */
-function writeJson(file, obj) {
+/** @param {Record<string, unknown>} obj */
+function writeSubs(obj) {
 	mkdirSync(DATA_DIR, { recursive: true });
-	const tmp = `${file}.${process.pid}.tmp`;
+	const tmp = `${SUBS_FILE}.${process.pid}.tmp`;
 	writeFileSync(tmp, JSON.stringify(obj, null, 2));
-	renameSync(tmp, file); // atomic replace
+	renameSync(tmp, SUBS_FILE); // atomic replace
 }
-
-// --- Web Push subscriptions ---
 
 /** @param {string} identity */
 export function getSubscription(identity) {
-	return readJson(SUBS_FILE)[identity] ?? null;
+	return readSubs()[identity] ?? null;
 }
 
 /** @param {string} identity @param {import('web-push').PushSubscription} subscription */
 export function setSubscription(identity, subscription) {
-	const all = readJson(SUBS_FILE);
+	const all = readSubs();
 	all[identity] = subscription;
-	writeJson(SUBS_FILE, all);
+	writeSubs(all);
 }
 
 /** @param {string} identity */
 export function deleteSubscription(identity) {
-	const all = readJson(SUBS_FILE);
+	const all = readSubs();
 	if (identity in all) {
 		delete all[identity];
-		writeJson(SUBS_FILE, all);
+		writeSubs(all);
 	}
 }
 
-// --- Native push tokens (APNs / FCM) ---
-
-/**
- * @typedef {{ platform: 'ios' | 'android', token: string, updatedAt: number }} NativeToken
- */
-
-/** @param {string} identity @returns {NativeToken | null} */
-export function getNativeToken(identity) {
-	const e = readJson(NATIVE_FILE)[identity];
-	return e && typeof e.token === 'string' ? e : null;
-}
-
-/** @param {string} identity @param {'ios' | 'android'} platform @param {string} token */
-export function setNativeToken(identity, platform, token) {
-	const all = readJson(NATIVE_FILE);
-	all[identity] = { platform, token, updatedAt: Date.now() };
-	writeJson(NATIVE_FILE, all);
-}
-
-/** @param {string} identity */
-export function deleteNativeToken(identity) {
-	const all = readJson(NATIVE_FILE);
-	if (identity in all) {
-		delete all[identity];
-		writeJson(NATIVE_FILE, all);
-	}
-}
-
-// --- status (for /api/health) ---
-
-/** @returns {Record<string, { web: boolean, native: false | 'ios' | 'android' }>} */
-export function deliveryStatus() {
-	const subs = readJson(SUBS_FILE);
-	const native = readJson(NATIVE_FILE);
-	const names = new Set([...Object.keys(subs), ...Object.keys(native)]);
-	return Object.fromEntries(
-		[...names].map((n) => [
-			n,
-			{ web: Boolean(subs[n]?.endpoint), native: native[n]?.platform ?? false }
-		])
-	);
+/** @returns {Record<string, boolean>} identity -> has a stored web-push subscription */
+export function subscriptionStatus() {
+	const all = readSubs();
+	return Object.fromEntries(Object.entries(all).map(([k, v]) => [k, Boolean(v?.endpoint)]));
 }
 
 // Make sure the data dir exists at boot so the first write can't race a missing parent.

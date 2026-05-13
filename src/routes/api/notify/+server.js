@@ -1,20 +1,21 @@
 import { json, error } from '@sveltejs/kit';
 import { getIdentities, otherIdentity } from '$lib/server/config.js';
-import {
-	getSubscription,
-	deleteSubscription,
-	getNativeToken,
-	deleteNativeToken
-} from '$lib/server/store.js';
-import { sendWebPush, sendApns, sendFcm } from '$lib/server/push.js';
+import { getSubscription, deleteSubscription } from '$lib/server/store.js';
+import { sendWebPush } from '$lib/server/push.js';
+import { sendToIdentity } from '$lib/server/stream.js';
 import { startEscalation, cancelEscalation } from '$lib/server/escalation.js';
 import { SIGNAL_BY_ID } from '$lib/signals.js';
 
 /**
- * Deliver one notification for `sig` to `to`, over every channel that parent is registered on:
- * the native app (APNs/FCM) — which, for "request" tiles, sends a *critical* alert that bypasses
- * silent/DND — and/or the PWA (Web Push). Dead endpoints are pruned. `attempt` 0 = the initial
- * ping; >0 = an escalation nudge (labelled as such).
+ * Deliver one notification for `sig` to `to`. We try every live channel that parent has:
+ *
+ *   1. SSE — if the native Android app is connected (foreground service), push it down the open
+ *      EventSource and the app raises a local notification on its DND-bypass channel. That's the
+ *      path that overrides silent/Focus without needing FCM / a Firebase project.
+ *   2. Web Push — for whoever is still on the plain PWA (Justin's wife). Can't bypass DND but
+ *      gets re-buzzed by the escalation timer.
+ *
+ * `attempt` 0 = the initial ping; >0 = an escalation nudge (labelled "still waiting").
  *
  * @param {string} to
  * @param {string} from
@@ -34,30 +35,17 @@ async function deliver(to, from, sig, attempt) {
 		attempt,
 		ts: Date.now()
 	};
-	const critical = sig.escalate; // "request" tiles ride the critical-alert path on iOS
 
 	const channels = /** @type {string[]} */ ([]);
 	const errors = /** @type {string[]} */ ([]);
 	let anyOk = false;
 	let anyEndpoint = false;
 
-	const native = getNativeToken(to);
-	if (native) {
+	const streamed = sendToIdentity(to, payload);
+	if (streamed > 0) {
 		anyEndpoint = true;
-		const r =
-			native.platform === 'ios'
-				? await sendApns(native.token, payload, { critical })
-				: await sendFcm(native.token, payload, { critical });
-		if (r.ok) {
-			anyOk = true;
-			channels.push(native.platform);
-		} else {
-			errors.push(r.error);
-			if (r.gone) {
-				deleteNativeToken(to);
-				anyEndpoint = false;
-			}
-		}
+		anyOk = true;
+		channels.push(`stream(${streamed})`);
 	}
 
 	const sub = getSubscription(to);
@@ -71,8 +59,7 @@ async function deliver(to, from, sig, attempt) {
 			errors.push(r.error);
 			if (r.gone) {
 				deleteSubscription(to);
-				// only mark "no endpoint" if there's also no live native token
-				if (!getNativeToken(to)) anyEndpoint = anyEndpoint && false;
+				if (streamed === 0) anyEndpoint = false;
 			}
 		}
 	}
@@ -105,11 +92,10 @@ export async function POST({ request }) {
 
 	const r = await deliver(to, from, sig, 0);
 	if (!r.ok) {
-		const noEndpoint = !getNativeToken(to) && !getSubscription(to);
 		return json({
 			ok: true,
 			delivered: false,
-			reason: noEndpoint ? 'not-registered' : 'push-error',
+			reason: r.gone ? 'not-registered' : 'push-error',
 			detail: r.errors.join('; ') || undefined,
 			to
 		});

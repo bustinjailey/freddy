@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { SIGNALS } from '$lib/signals.js';
-	import { isNativeApp, initNativePush } from '$lib/native.js';
+	import { isNativeApp, initNativeStream, openDndSettings, openBatterySettings } from '$lib/native.js';
 
 	let { data } = $props();
 	// data.identities: [string, string], data.vapidPublicKey: string
@@ -22,7 +22,7 @@
 	let me = $state('');
 	let other = $derived(data.identities.find((n) => n !== me) ?? '');
 
-	/** @type {'unknown' | 'working' | 'ok' | 'denied' | 'unsupported' | 'needs-install' | 'error'} */
+	/** @type {'unknown' | 'working' | 'ok' | 'denied' | 'unsupported' | 'needs-install' | 'error' | 'needs-dnd'} */
 	let pushState = $state('unknown');
 	let pushDetail = $state('');
 
@@ -63,19 +63,23 @@
 		return out;
 	}
 
-	/** Set up alerts the right way for where we're running: native push in the Capacitor app,
-	 *  Web Push in the browser/PWA. */
+	/** Set up alerts the right way for where we're running: native foreground-service SSE in the
+	 *  Capacitor Android app, plain Web Push in the browser/PWA. */
 	async function setupAlerts() {
 		if (isNativeApp()) {
 			pushState = 'working';
 			try {
-				const r = await initNativePush(me, ackSeen);
-				if (r.active) pushState = 'ok';
-				else if (r.reason === 'denied') pushState = 'denied';
-				else {
-					pushState = 'error';
-					pushDetail = 'native push: ' + (r.reason ?? 'unavailable');
+				const r = await initNativeStream(me);
+				if (!r.active) {
+					if (r.reason === 'notification-denied') pushState = 'denied';
+					else {
+						pushState = 'error';
+						pushDetail = 'native stream: ' + (r.reason ?? 'unavailable');
+					}
+					return;
 				}
+				// Service is running; nag if DND-bypass isn't granted yet.
+				pushState = r.dndPolicyGranted ? 'ok' : 'needs-dnd';
 			} catch (err) {
 				pushState = 'error';
 				pushDetail = String(/** @type {any} */ (err)?.message ?? err);
@@ -215,8 +219,8 @@
 		}
 	}
 
-	const STATUS_DOT = { ok: '#3ecf6b', working: '#f4c542', unknown: '#f4c542' };
-	let dotColor = $derived(STATUS_DOT[/** @type {'ok'|'working'|'unknown'} */ (pushState)] ?? '#e0573f');
+	const STATUS_DOT = { ok: '#3ecf6b', working: '#f4c542', unknown: '#f4c542', 'needs-dnd': '#f4c542' };
+	let dotColor = $derived(STATUS_DOT[/** @type {keyof typeof STATUS_DOT} */ (pushState)] ?? '#e0573f');
 </script>
 
 <div id="app">
@@ -272,7 +276,18 @@
 				{:else if pushState === 'denied'}
 					<span class="status-main">🔕 Notifications are off</span>
 					<span class="status-sub">Turn them on for Freddy in your phone’s Settings, then </span>
-					<button class="retry" onclick={setupPush}>try again</button>
+					<button class="retry" onclick={setupAlerts}>try again</button>
+				{:else if pushState === 'needs-dnd'}
+					<span class="status-main">🔔 One more step: let Freddy ring through Do-Not-Disturb</span>
+					<span class="status-sub"
+						>Tap the button, find Freddy in the list, and turn it on. Also mark Freddy
+						“Unrestricted” under battery so Android doesn’t put the listener to sleep.</span
+					>
+					<div class="status-actions">
+						<button class="retry" onclick={openDndSettings}>DND access</button>
+						<button class="retry" onclick={openBatterySettings}>Battery settings</button>
+						<button class="retry" onclick={setupAlerts}>re-check</button>
+					</div>
 				{:else if pushState === 'unsupported'}
 					<span class="status-main">This browser can’t do push</span>
 					<span class="status-sub">Use Safari on iPhone, or Chrome on Android.</span>
@@ -442,12 +457,19 @@
 		font-size: 0.95rem;
 		color: var(--fg);
 	}
-	.status-needs-install {
+	.status-needs-install,
+	.status-needs-dnd {
 		background: #324a63;
 	}
 	.status-denied,
 	.status-error {
 		background: #5a2b26;
+	}
+	.status-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 14px;
+		margin-top: 6px;
 	}
 	.status-main {
 		font-weight: 700;
