@@ -1,0 +1,79 @@
+name: Build Android APK
+
+# Builds the sideloadable debug APK for Justin's Android phone. There's no Play Store,
+# no Firebase, no release-signing key — this is a debug build pinned to one device.
+# Triggers on every push to a build branch + on demand. On main and bus-37-native-wrapper
+# the APK is also published to a rolling "latest-android" prerelease so the install URL
+# stays stable.
+
+on:
+  push:
+    branches: [main, bus-37-native-wrapper]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - run: npm ci
+
+      - name: Build SvelteKit (fallback assets get bundled into the APK)
+        run: npm run build
+
+      - name: Sync Capacitor into android/
+        run: npm run cap:sync
+
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Stage APKs (one SHA-tagged, one stable filename)
+        run: |
+          mkdir -p dist
+          SHORT_SHA="${GITHUB_SHA::7}"
+          SAFE_REF="${GITHUB_REF_NAME//\//-}"
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             "dist/freddy-${SAFE_REF}-${SHORT_SHA}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             "dist/freddy-latest.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freddy-apk
+          path: dist/freddy-*-*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish / refresh "latest-android" prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-android
+          name: Latest Android build (auto)
+          prerelease: true
+          # Stable filename + replace-on-upload -> the download URL stays the same.
+          fail_on_unmatched_files: true
+          files: dist/freddy-latest.apk
+          body: |
+            Auto-built from `${{ github.ref_name }}` @ `${{ github.sha }}`.
+
+            **Install on Android:** download the `.apk` on your phone, tap it, allow
+            "install unknown apps" once. First launch: allow the notification permission,
+            then tap the **DND access** banner and toggle Freddy on, then **Battery
+            settings** and mark Freddy **Unrestricted**. See `mobile/README.md`.
