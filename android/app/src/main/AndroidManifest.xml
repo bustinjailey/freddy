@@ -24,6 +24,15 @@
 
         </activity>
 
+        <!-- The foreground service that keeps the SSE connection to Freddy open and raises a local
+             notification (on a setBypassDnd(true) channel) whenever the server sends a signal. The
+             dataSync type is the closest fit for "long-lived sync of small events from a server"
+             that Android 14+ accepts without special-use justification. -->
+        <service
+            android:name=".FreddyStreamService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -38,9 +47,16 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Android 13+: runtime notification permission, requested via @capacitor/push-notifications. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ requires declaring the FGS subtype permission too. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 13+: runtime notification permission. Requested at app launch via the plugin. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Lets the high-importance "alerts" channel set bypassDnd(true) so a "Need you" rings through
-         Do-Not-Disturb. The user still has to grant DND access in Settings the first time. -->
+    <!-- Lets the high-importance "alerts" channel call setBypassDnd(true) so a "Need you" rings
+         through Do-Not-Disturb. The user still has to grant DND access in Settings the first time —
+         the plugin opens that screen on demand. -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Re-launch the FGS automatically after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>
