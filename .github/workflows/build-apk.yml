@@ -28,7 +28,8 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          # Capacitor 7's android library targets Java 21 sources; 17 won't compile it.
+          java-version: '21'
 
       - uses: android-actions/setup-android@v3
 

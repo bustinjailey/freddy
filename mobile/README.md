@@ -54,7 +54,7 @@ Android code in `android/app/src/main/java/org/bustinjailey/freddy/`.
 
 **Needs you (one-time setup on your Android phone):**
 
-1. **Build the APK** — needs Android Studio's SDK + Java 17. From a Mac/Linux with the SDK:
+1. **Build the APK** — needs Android Studio's SDK + Java 21 (Capacitor 7 requires it). From a Mac/Linux with the SDK:
    ```sh
    npm install && npm run build && npm run cap:sync && npm run cap:apk
    ```
