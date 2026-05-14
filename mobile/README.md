@@ -82,7 +82,7 @@ sticky foreground service, and the connection auto-reconnects.
 
 ## Testing it
 
-With the server reachable, the phone connected to the app, and `Mom` triggering from the PWA:
+With the server reachable, the phone connected to the app, and `Erica` triggering from the PWA:
 
 - Phone on silent → "Need you" rings (alarm-volume, vibrates), even with Do-Not-Disturb on.
 - Phone in Focus mode → same.
@@ -90,7 +90,7 @@ With the server reachable, the phone connected to the app, and `Mom` triggering 
 - Tap the notification → opens Freddy → triggers `/api/ack` → server stops escalating.
 
 The server's `/api/health` shows whether a stream is currently connected:
-`recipients: { "Justin": { web: false, stream: 1 }, "Mom": { web: true, stream: 0 } }`.
+`recipients: { "Justin": { web: false, stream: 1 }, "Erica": { web: true, stream: 0 } }`.
 
 ## Limitations / things to know
 

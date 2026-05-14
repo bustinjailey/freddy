@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 
-const DEFAULT_IDENTITIES = ['Justin', 'Mom'];
+const DEFAULT_IDENTITIES = ['Justin', 'Erica'];
 
 /**
  * The two parent identities shown on the "who are you?" screen.
