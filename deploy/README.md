@@ -29,7 +29,7 @@ ORIGIN=https://freddy.bustinjailey.org
 VAPID_PUBLIC_KEY=$PUB
 VAPID_PRIVATE_KEY=$PRIV
 VAPID_SUBJECT=mailto:bustinjailey@gmail.com
-FREDDY_IDENTITIES=Justin,Mom
+FREDDY_IDENTITIES=Justin,Erica
 FREDDY_DATA_DIR=/opt/apps/freddy/data
 EOF
 # NB: keep PUBLIC and PRIVATE from the *same* keypair.

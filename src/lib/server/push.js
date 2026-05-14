@@ -2,7 +2,7 @@ import webpush from 'web-push';
 import { env } from '$env/dynamic/private';
 
 /**
- * Web Push (PWA) — for whoever isn't running the native Android app. Mom uses this; Justin uses
+ * Web Push (PWA) — for whoever isn't running the native Android app. Erica uses this; Justin uses
  * the SSE path (see `stream.js` + the Android foreground service). VAPID keys come from the env.
  */
 

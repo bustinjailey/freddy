@@ -3,7 +3,7 @@
 A tiny installable PWA for two parents. Four big tiles — **Need you · Diaper · Bottle · All good**.
 Tap one and the *other* parent's phone gets a push notification. That's the whole app.
 
-- **Who you are**: picked once on first open ("Justin" / "Mom"), stored in `localStorage`, no password.
+- **Who you are**: picked once on first open ("Justin" / "Erica"), stored in `localStorage`, no password.
 - **A tap never echoes to the sender** — the backend only pushes to the other identity.
 - **Keeps nudging until seen** — the request tiles (Need you / Diaper / Bottle) re-fire the
   notification every ~30s (configurable) until the other parent opens the app or taps/dismisses the
@@ -100,7 +100,7 @@ See [`mobile/README.md`](mobile/README.md) for the full why-and-how.
 | `ORIGIN` | public URL, e.g. `https://freddy.bustinjailey.org` — needed for SvelteKit CSRF behind the proxy |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push keys (`npx web-push generate-vapid-keys`) |
 | `VAPID_SUBJECT` | `mailto:` contact for the push services |
-| `FREDDY_IDENTITIES` | the two names, comma-separated (default `Justin,Mom`) |
+| `FREDDY_IDENTITIES` | the two names, comma-separated (default `Justin,Erica`) |
 | `FREDDY_DATA_DIR` | where `subscriptions.json` lives (default `data`) |
 | `FREDDY_REPEAT_INTERVAL_SEC` | seconds between escalation nudges (default `30`, clamped 5–600) |
 | `FREDDY_REPEAT_MAX` | how many times to re-buzz before giving up (default `6` → ~3 min; `0` disables escalation) |
