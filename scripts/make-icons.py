@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Generate Freddy's PWA icons. Pure-PIL, supersampled for smooth edges.
+"""Generate Freddy's icons. Pure-PIL, supersampled for smooth edges.
 
-Outputs into ../static/:
+PWA — outputs into ../static/:
   icon-192.png, icon-512.png        — purpose "any" (full-bleed, OS rounds it)
   icon-512-maskable.png             — purpose "maskable" (content in safe zone)
   apple-touch-icon.png (180x180)    — iOS home screen (no transparency)
   badge-96.png                      — Android notification badge (white silhouette, transparent)
   favicon.png (64x64)
+
+Native Android wrapper — outputs into ../android/app/src/main/res/mipmap-*:
+  ic_launcher.png                   — legacy square icon (pre-Android 8)
+  ic_launcher_round.png             — legacy round icon (pre-Android 8)
+  ic_launcher_foreground.png        — adaptive icon foreground (transparent, safe zone)
 """
 import math
 import os
@@ -15,6 +20,7 @@ from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.normpath(os.path.join(HERE, "..", "static"))
+ANDROID_RES = os.path.normpath(os.path.join(HERE, "..", "android", "app", "src", "main", "res"))
 
 SS = 4  # supersample factor
 
@@ -89,7 +95,7 @@ def draw_bottle(draw, cx, cy, w, h, fill, shade=None):
         )
 
 
-def make_icon(px, *, maskable=False, transparent=False, mono=False):
+def make_icon(px, *, maskable=False, transparent=False, mono=False, circle=False):
     n = px * SS
     if transparent:
         base = Image.new("RGBA", (n, n), (0, 0, 0, 0))
@@ -124,7 +130,14 @@ def make_icon(px, *, maskable=False, transparent=False, mono=False):
     draw_bottle(d, n / 2, n / 2, bw, bh, fill, shade)
     out = Image.alpha_composite(base, layer)
 
-    if not transparent and not maskable:
+    if circle:
+        # circular mask for Android legacy ic_launcher_round
+        m = Image.new("L", (n, n), 0)
+        ImageDraw.Draw(m).ellipse([0, 0, n - 1, n - 1], fill=255)
+        clipped = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        clipped.paste(out, (0, 0), m)
+        out = clipped
+    elif not transparent and not maskable:
         # round the corners a touch (iOS/Android will round further; this just softens "any" use)
         r = int(n * 0.20)
         m = rounded_mask(n, r)
@@ -137,6 +150,21 @@ def make_icon(px, *, maskable=False, transparent=False, mono=False):
 
 def save(img, name):
     path = os.path.join(OUT, name)
+    img.save(path, "PNG")
+    print("wrote", os.path.relpath(path, os.path.join(HERE, "..")), img.size)
+
+
+ANDROID_DENSITIES = (
+    # (dir suffix, legacy px, foreground px)
+    ("mdpi", 48, 108),
+    ("hdpi", 72, 162),
+    ("xhdpi", 96, 216),
+    ("xxhdpi", 144, 324),
+    ("xxxhdpi", 192, 432),
+)
+
+
+def save_to(img, path):
     img.save(path, "PNG")
     print("wrote", os.path.relpath(path, os.path.join(HERE, "..")), img.size)
 
@@ -154,6 +182,17 @@ def main():
     print("wrote static/apple-touch-icon.png", bg.size)
     save(make_icon(96, transparent=True, mono=True), "badge-96.png")
     save(make_icon(64), "favicon.png")
+
+    # Native Android launcher icons. Adaptive foreground is transparent + safe-zone
+    # so it composes over the @color/ic_launcher_background defined in res/values.
+    for suffix, legacy_px, fg_px in ANDROID_DENSITIES:
+        d = os.path.join(ANDROID_RES, f"mipmap-{suffix}")
+        if not os.path.isdir(d):
+            continue
+        save_to(make_icon(legacy_px), os.path.join(d, "ic_launcher.png"))
+        save_to(make_icon(legacy_px, circle=True), os.path.join(d, "ic_launcher_round.png"))
+        save_to(make_icon(fg_px, transparent=True, maskable=True),
+                os.path.join(d, "ic_launcher_foreground.png"))
 
 
 if __name__ == "__main__":
